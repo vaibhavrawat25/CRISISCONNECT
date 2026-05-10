@@ -6,6 +6,8 @@ export const authAPI = {
   register:       (data) => api.post('/auth/register', data),
   getMe:          ()     => api.get('/auth/me'),
   changePassword: (data) => api.put('/auth/change-password', data),
+  forgotPassword: (data) => api.post('/auth/forgot-password', data),
+  resetPassword:  (token, data) => api.put(`/auth/reset-password/${token}`, data),
 };
 
 // ── USERS ─────────────────────────────────────────────
@@ -41,12 +43,25 @@ export const assignmentsAPI = {
   create:       (data)   => api.post('/assignments', data),
   updateStatus: (id, data) => api.patch(`/assignments/${id}/status`, data),
   delete:       (id)     => api.delete(`/assignments/${id}`),
+  getBestMatch: (reqId)  => api.get(`/assignments/best-match/${reqId}`),
 };
 
 // ── DASHBOARD ─────────────────────────────────────────
 export const dashboardAPI = {
   getStats:    () => api.get('/dashboard/stats'),
   getActivity: () => api.get('/dashboard/activity'),
+  getHeatmap:  () => api.get('/dashboard/heatmap'),
+  getVolunteerPositions: () => api.get('/dashboard/volunteer-positions'),
+};
+
+// ── COORDINATOR APPLICATIONS ──────────────────────────
+export const coordinatorApplicationsAPI = {
+  submit:    (formData) => api.post('/coordinator-applications', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }),
+  getAll:    (params) => api.get('/coordinator-applications', { params }),
+  getById:   (id)     => api.get(`/coordinator-applications/${id}`),
+  review:    (id, data) => api.patch(`/coordinator-applications/${id}/review`, data),
 };
 
 // ── VICTIM ────────────────────────────────────────────

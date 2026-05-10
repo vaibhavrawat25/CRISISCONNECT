@@ -1,21 +1,20 @@
 import { useState, useEffect, useCallback } from 'react';
 import { assignmentsAPI, requestsAPI, volunteersAPI } from '../../api';
 import { useAuth } from '../../context/AuthContext';
-import PageHeader from '../../components/layout/PageHeader';
 import Badge, { PriorityDot } from '../../components/common/Badge';
 import Loader from '../../components/common/Loader';
-import Modal from '../../components/common/Modal';
+import AssignModal from '../../components/modals/AssignModal';
 
-const STATUSES = ['','assigned','accepted','in_progress','completed','rejected'];
+const STATUSES = ['', 'assigned', 'accepted', 'in_progress', 'completed', 'rejected'];
 
 export default function AssignmentsPage() {
   const { isVolunteer, canManage } = useAuth();
   const [assignments, setAssignments] = useState([]);
-  const [loading, setLoading]   = useState(true);
-  const [filter, setFilter]     = useState('');
-  const [search, setSearch]     = useState('');
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState('');
+  const [search, setSearch] = useState('');
   const [showAssign, setShowAssign] = useState(false);
-  const [error, setError]       = useState('');
+  const [error, setError] = useState('');
   const [actionLoading, setActionLoading] = useState(null);
 
   const load = useCallback(async () => {
@@ -24,7 +23,7 @@ export default function AssignmentsPage() {
       const { data } = isVolunteer
         ? await assignmentsAPI.getMy()
         : await assignmentsAPI.getAll(filter ? { status: filter } : {});
-      setAssignments(data.data.docs);
+      setAssignments(data.data.docs || data.data);
     } catch { setError('Failed to load assignments'); }
     finally { setLoading(false); }
   }, [filter, isVolunteer]);
@@ -41,7 +40,7 @@ export default function AssignmentsPage() {
   };
 
   const deleteAssignment = async (id) => {
-    if (!confirm('Cancel this assignment?')) return;
+    if (!window.confirm('Cancel this assignment?')) return;
     try { await assignmentsAPI.delete(id); load(); }
     catch (e) { alert(e.response?.data?.message || 'Delete failed'); }
   };
@@ -51,138 +50,155 @@ export default function AssignmentsPage() {
     const title = a.request?.title || '';
     const vname = a.volunteer?.name || '';
     return title.toLowerCase().includes(search.toLowerCase()) ||
-           vname.toLowerCase().includes(search.toLowerCase());
+      vname.toLowerCase().includes(search.toLowerCase());
   });
 
   const nextActions = (status) => {
     const map = {
-      assigned:    [{ label: '✓ Accept', status: 'accepted', cls: 'btn-success' },
-                    { label: '✕ Reject', status: 'rejected', cls: 'btn-danger' }],
-      accepted:    [{ label: '▶ Start', status: 'in_progress', cls: 'btn-primary' }],
-      in_progress: [{ label: '✔ Complete', status: 'completed', cls: 'btn-success' }],
+      assigned: [{ label: 'Accept', status: 'accepted', cls: 'success' },
+      { label: 'Reject', status: 'rejected', cls: 'danger' }],
+      accepted: [{ label: 'Start', status: 'in_progress', cls: 'primary' }],
+      in_progress: [{ label: 'Complete', status: 'completed', cls: 'success' }],
     };
     return map[status] || [];
   };
 
   return (
     <>
-      <PageHeader
-        title="Assignments"
-        subtitle={isVolunteer ? 'Your assigned relief tasks' : 'Manage volunteer-request assignments'}
-        actions={canManage && (
-          <button className="btn btn-primary" onClick={() => setShowAssign(true)}>
-            + Assign Volunteer
-          </button>
+      <div className="topbar">
+        <div className="topbar-left">
+          <h1>Assignments</h1>
+          <p>{isVolunteer ? 'Your assigned relief tasks' : 'Manage volunteer-request assignments'}</p>
+        </div>
+        {canManage && (
+          <div className="topbar-right">
+            <button className="btn-primary" onClick={() => setShowAssign(true)}>
+              + Assign Volunteer
+            </button>
+          </div>
         )}
-      />
-      <div className="page-body page-enter">
-        {error && <div className="alert alert-error">{error}</div>}
+      </div>
 
-        <div className="filters-bar">
-          <input
-            className="form-control search-input"
-            placeholder="🔍  Search by request or volunteer…"
-            value={search} onChange={e => setSearch(e.target.value)}
-          />
-          <select className="form-control" value={filter}
-            onChange={e => setFilter(e.target.value)}>
-            {STATUSES.map(s => <option key={s} value={s}>{s || 'All Status'}</option>)}
+      <div className="page-body page-enter">
+        {error && <div style={{ background: 'var(--danger-bg)', color: 'var(--danger)', border: '1px solid var(--danger-br)', padding: '12px 16px', borderRadius: 'var(--r-md)' }}>{error}</div>}
+
+        <div className="filter-strip">
+          <div style={{ position: 'relative', flex: 1, maxWidth: '300px' }}>
+            <span className="material-symbols-outlined" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', fontSize: '16px', color: 'var(--t4)' }}>search</span>
+            <input
+              className="form-control"
+              style={{ paddingLeft: '36px' }}
+              placeholder="Search request or volunteer…"
+              value={search} onChange={e => setSearch(e.target.value)}
+            />
+          </div>
+          <select className="form-control" style={{ width: 'fit-content', minWidth: '140px' }} value={filter} onChange={e => setFilter(e.target.value)}>
+            <option value="">All Statuses</option>
+            {STATUSES.filter(Boolean).map(s => <option key={s} value={s}>{s}</option>)}
           </select>
           {(filter || search) && (
-            <button className="btn btn-ghost btn-sm"
-              onClick={() => { setFilter(''); setSearch(''); }}>✕ Clear</button>
+            <button className="btn-ghost" style={{ padding: '6px 12px' }} onClick={() => { setFilter(''); setSearch(''); }}>
+              ✕ Clear
+            </button>
           )}
         </div>
 
-        {loading ? <Loader /> : filtered.length === 0 ? (
+        {loading ? <div style={{ padding: '60px 0' }}><Loader /></div> : filtered.length === 0 ? (
           <div className="empty-state">
-            <div className="empty-icon">📋</div>
-            <p>No assignments found</p>
+            <span className="material-symbols-outlined" style={{ fontSize: '48px', color: 'var(--t4)', marginBottom: '16px' }}>assignment</span>
+            <div style={{ fontSize: '15px', fontWeight: 600, color: 'var(--t1)', marginBottom: '6px' }}>No assignments found</div>
           </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             {filtered.map(a => (
-              <div key={a._id} className="card" style={{ padding: '16px 20px' }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 12, alignItems: 'start' }}>
+              <div key={a._id} className="card" style={{ padding: '16px 20px', display: 'flex', gap: '24px', alignItems: 'flex-start' }}>
 
-                  {/* Left: request info */}
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                      {a.request?.priority && <PriorityDot priority={a.request.priority} />}
-                      <span style={{ fontWeight: 700, fontSize: '.95rem' }}>{a.request?.title || 'Unknown Request'}</span>
-                      <Badge value={a.status} />
+                {/* Left: Request Info */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+                    {a.request?.priority && <div className={`priority-dot ${a.request.priority}`} />}
+                    <div style={{ fontSize: '15px', fontWeight: 600, color: 'var(--t1)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {a.request?.title || 'Unknown Request'}
                     </div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, fontSize: '.78rem', color: 'var(--text3)' }}>
-                      {a.request?.requestType && (
-                        <span>🏷 {a.request.requestType}</span>
-                      )}
-                      {a.request?.location?.area && (
-                        <span>📍 {a.request.location.area}</span>
-                      )}
-                      {!isVolunteer && a.volunteer?.name && (
-                        <span>👤 {a.volunteer.name}</span>
-                      )}
-                      {a.assignedBy?.name && (
-                        <span>Assigned by {a.assignedBy.name}</span>
-                      )}
-                      <span style={{ fontFamily: 'var(--font-mono)' }}>
-                        {new Date(a.createdAt).toLocaleDateString('en-IN')}
-                      </span>
-                    </div>
-                    {a.remarks && (
-                      <div style={{ marginTop: 6, fontSize: '.8rem', color: 'var(--text2)', fontStyle: 'italic' }}>
-                        "{a.remarks}"
-                      </div>
-                    )}
+                    <Badge value={a.status} />
                   </div>
 
-                  {/* Right: actions */}
-                  <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
-                    {isVolunteer && nextActions(a.status).map(action => (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', fontSize: '12px', color: 'var(--t3)' }}>
+                    {a.request?.requestType && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>label</span>
+                        <span style={{ textTransform: 'capitalize' }}>{a.request.requestType}</span>
+                      </div>
+                    )}
+                    {a.request?.location?.area && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>pin_drop</span>
+                        {a.request.location.area}
+                      </div>
+                    )}
+                    {!isVolunteer && a.volunteer?.name && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>person</span>
+                        {a.volunteer.name}
+                      </div>
+                    )}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>event</span>
+                      {new Date(a.createdAt).toLocaleDateString('en-IN')}
+                    </div>
+                  </div>
+
+                  {a.remarks && (
+                    <div style={{ marginTop: '10px', fontSize: '12px', color: 'var(--t4)', fontStyle: 'italic', background: 'var(--neutral-bg)', padding: '6px 10px', borderRadius: 'var(--r-sm)' }}>
+                      "{a.remarks}"
+                    </div>
+                  )}
+                </div>
+
+                {/* Right: Timeline & Actions */}
+                <div style={{ width: '320px', flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+
+                  <div className="tracker-stepper" style={{ marginBottom: '16px', width: '100%', padding: 0 }}>
+                    <div className="tracker-line" style={{ left: '20px', right: '20px' }} />
+                    <div className="tracker-line tracker-line-fill" style={{ left: '20px', right: '20px', width: ['completed'].includes(a.status) ? '100%' : ['in_progress'].includes(a.status) ? '66%' : ['accepted'].includes(a.status) ? '33%' : '0%' }} />
+
+                    {[
+                      { id: 'assigned', label: 'Assigned', done: true },
+                      { id: 'accepted', label: 'Accepted', done: !!a.acceptedAt },
+                      { id: 'in_progress', label: 'Started', done: ['in_progress', 'completed'].includes(a.status) },
+                      { id: 'completed', label: 'Done', done: a.status === 'completed' }
+                    ].map((step, i) => (
+                      <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', position: 'relative', flex: 1 }}>
+                        <div className={`tracker-node ${step.done ? 'done' : 'future'}`} style={{ width: '18px', height: '18px', fontSize: '10px', marginBottom: '4px' }}>
+                          {step.done ? <span className="material-symbols-outlined" style={{ fontSize: '10px' }}>check</span> : (i + 1)}
+                        </div>
+                        <div style={{ fontSize: '10px', color: step.done ? 'var(--t2)' : 'var(--t4)', fontWeight: step.done ? 600 : 400 }}>
+                          {step.label}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    {(isVolunteer || canManage) && nextActions(a.status).map(action => (
                       <button
                         key={action.status}
-                        className={`btn btn-sm ${action.cls}`}
+                        className={`btn-${action.cls}`}
+                        style={{ padding: '6px 14px', fontSize: '12px' }}
                         disabled={actionLoading === a._id + action.status}
                         onClick={() => updateStatus(a._id, action.status)}
                       >
-                        {actionLoading === a._id + action.status ? '…' : action.label}
+                        {actionLoading === a._id + action.status ? '...' : action.label}
                       </button>
                     ))}
-                    {canManage && (
-                      <button className="btn btn-danger btn-sm"
-                        onClick={() => deleteAssignment(a._id)}>Cancel</button>
+                    {canManage && !['completed', 'rejected'].includes(a.status) && (
+                      <button className="btn-ghost danger" style={{ padding: '6px 14px', fontSize: '12px' }} onClick={() => deleteAssignment(a._id)}>
+                        Cancel
+                      </button>
                     )}
                   </div>
                 </div>
 
-                {/* Timeline */}
-                <div style={{ display: 'flex', gap: 16, marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
-                  {[
-                    { label: 'Assigned', time: a.createdAt, done: true },
-                    { label: 'Accepted', time: a.acceptedAt, done: !!a.acceptedAt },
-                    { label: 'In Progress', time: null, done: ['in_progress','completed'].includes(a.status) },
-                    { label: 'Completed', time: a.completedAt, done: a.status === 'completed' },
-                  ].map((step, i) => (
-                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '.72rem' }}>
-                      <span style={{
-                        width: 16, height: 16, borderRadius: '50%', display: 'inline-flex',
-                        alignItems: 'center', justifyContent: 'center', fontSize: '.6rem',
-                        background: step.done ? 'var(--green)' : 'var(--bg4)',
-                        border: `1px solid ${step.done ? 'var(--green)' : 'var(--border)'}`,
-                        color: step.done ? '#fff' : 'var(--text3)',
-                      }}>
-                        {step.done ? '✓' : '○'}
-                      </span>
-                      <span style={{ color: step.done ? 'var(--text2)' : 'var(--text3)' }}>
-                        {step.label}
-                        {step.time && <span style={{ color: 'var(--text3)', marginLeft: 3 }}>
-                          {new Date(step.time).toLocaleDateString('en-IN')}
-                        </span>}
-                      </span>
-                      {i < 3 && <span style={{ color: 'var(--border2)', marginLeft: 2 }}>──</span>}
-                    </div>
-                  ))}
-                </div>
               </div>
             ))}
           </div>
@@ -199,79 +215,4 @@ export default function AssignmentsPage() {
   );
 }
 
-/* ── Assign Volunteer Modal ───────────────────────────────── */
-function AssignModal({ onClose, onSuccess }) {
-  const [requests,   setRequests]   = useState([]);
-  const [volunteers, setVolunteers] = useState([]);
-  const [form, setForm] = useState({ requestId: '', volunteerId: '' });
-  const [saving, setSaving] = useState(false);
-  const [error, setError]   = useState('');
 
-  useEffect(() => {
-    Promise.all([
-      requestsAPI.getAll({ status: 'pending' }),
-      volunteersAPI.getAll({ isAvailable: 'true' }),
-    ]).then(([r, v]) => {
-      setRequests(r.data.data.docs);
-      setVolunteers(v.data.data);
-    });
-  }, []);
-
-  const submit = async (e) => {
-    e.preventDefault(); setError(''); setSaving(true);
-    try {
-      await assignmentsAPI.create(form);
-      onSuccess();
-    } catch (err) {
-      setError(err.response?.data?.message || 'Assignment failed');
-    } finally { setSaving(false); }
-  };
-
-  return (
-    <Modal title="Assign Volunteer to Request" onClose={onClose}>
-      <form onSubmit={submit}>
-        {error && <div className="alert alert-error">{error}</div>}
-
-        <div className="form-group">
-          <label className="form-label">Pending Request *</label>
-          <select className="form-control" value={form.requestId}
-            onChange={e => setForm(f => ({ ...f, requestId: e.target.value }))} required>
-            <option value="">— Select request —</option>
-            {requests.map(r => (
-              <option key={r._id} value={r._id}>
-                [{r.priority.toUpperCase()}] {r.title} — {r.location?.area || r.location?.address}
-              </option>
-            ))}
-          </select>
-          {requests.length === 0 && (
-            <div className="form-error">No pending requests available</div>
-          )}
-        </div>
-
-        <div className="form-group">
-          <label className="form-label">Available Volunteer *</label>
-          <select className="form-control" value={form.volunteerId}
-            onChange={e => setForm(f => ({ ...f, volunteerId: e.target.value }))} required>
-            <option value="">— Select volunteer —</option>
-            {volunteers.map(v => (
-              <option key={v._id} value={v._id}>
-                {v.name} — {v.skills?.join(', ') || 'general'} ({v.location || 'unknown location'})
-              </option>
-            ))}
-          </select>
-          {volunteers.length === 0 && (
-            <div className="form-error">No available volunteers</div>
-          )}
-        </div>
-
-        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 8 }}>
-          <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn btn-primary"
-            disabled={saving || !form.requestId || !form.volunteerId}>
-            {saving ? 'Assigning…' : 'Assign →'}
-          </button>
-        </div>
-      </form>
-    </Modal>
-  );
-}

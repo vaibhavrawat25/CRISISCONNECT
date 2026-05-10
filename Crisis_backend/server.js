@@ -9,7 +9,9 @@ const { apiLimiter } = require('./middleware/rateLimiter.middleware');
 dotenv.config();
 
 // Connect to MongoDB
-connectDB();
+if (process.env.NODE_ENV !== 'test') {
+  connectDB();
+}
 
 const app = express();
 
@@ -30,6 +32,10 @@ app.use(cors({
 app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ extended: true, limit: '10kb' }));
 
+// Serve uploaded files (coordinator document proofs, etc.)
+const path = require('path');
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
 // Request logging
 if (process.env.NODE_ENV !== 'production') {
   app.use(morgan('dev'));
@@ -46,6 +52,7 @@ app.use('/api/volunteers',  require('./routes/volunteer.routes'));
 app.use('/api/assignments', require('./routes/assignment.routes'));
 app.use('/api/dashboard',   require('./routes/dashboard.routes'));
 app.use('/api/victim',      require('./routes/victim.routes'));
+app.use('/api/coordinator-applications', require('./routes/coordinatorApplication.routes'));
 
 // Health check
 app.get('/', (req, res) => {
@@ -63,17 +70,33 @@ app.use((err, req, res, next) => {
 
 // ── Start Server with Graceful Shutdown ────────────────
 const PORT = process.env.PORT || 5000;
-const server = app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+let server;
+let escalationInterval;
+
+const { checkEscalations } = require('./services/escalation.service');
+
+if (process.env.NODE_ENV !== 'test') {
+  server = app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+    // Run escalation check every minute
+    escalationInterval = setInterval(checkEscalations, 60000);
+  });
+}
 
 const gracefulShutdown = (signal) => {
   console.log(`\n${signal} received. Shutting down gracefully...`);
-  server.close(() => {
-    const mongoose = require('mongoose');
-    mongoose.connection.close(false).then(() => {
-      console.log('MongoDB connection closed.');
-      process.exit(0);
+  if (escalationInterval) clearInterval(escalationInterval);
+  if (server) {
+    server.close(() => {
+      const mongoose = require('mongoose');
+      mongoose.connection.close(false).then(() => {
+        console.log('MongoDB connection closed.');
+        process.exit(0);
+      });
     });
-  });
+  } else {
+    process.exit(0);
+  }
 
   // Force exit after 10s if graceful shutdown fails
   setTimeout(() => {
@@ -84,3 +107,5 @@ const gracefulShutdown = (signal) => {
 
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
+
+module.exports = app;

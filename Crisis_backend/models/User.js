@@ -31,6 +31,10 @@ const userSchema = new mongoose.Schema(
       default: 'volunteer',
       index: true,
     },
+    adminLevel: {
+      type: Number,
+      default: null,
+    },
     // Victim-specific fields
     address: {
       type: String,
@@ -63,6 +67,10 @@ const userSchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
+    coordinates: {
+      lat: { type: Number },
+      lng: { type: Number },
+    },
     isActive: {
       type: Boolean,
       default: true,
@@ -75,6 +83,14 @@ const userSchema = new mongoose.Schema(
     lastActiveAt: {
       type: Date,
       default: Date.now,
+    },
+    resetPasswordToken: {
+      type: String,
+      select: false,
+    },
+    resetPasswordExpire: {
+      type: Date,
+      select: false,
     },
   },
   { timestamps: true }
