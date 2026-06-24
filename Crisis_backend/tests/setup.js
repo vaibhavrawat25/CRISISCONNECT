@@ -1,3 +1,5 @@
+process.env.JWT_SECRET = 'test_secret_key_12345';
+process.env.JWT_EXPIRE = '7d';
 const { MongoMemoryServer } = require('mongodb-memory-server');
 const mongoose = require('mongoose');
 

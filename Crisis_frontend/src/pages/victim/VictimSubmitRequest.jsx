@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { victimAPI } from '../../api';
 import MapPicker from '../../components/common/MapPicker';
+import { saveOfflineRequest } from '../../utils/offlineQueue';
 
 const NEED_TYPES = ['food','water','shelter','medical','rescue','clothing','other'];
 const URGENCIES  = ['critical','high','medium','low'];
@@ -30,6 +31,7 @@ export default function VictimSubmitRequest() {
   const [success, setSuccess] = useState(false);
   const [showMap, setShowMap] = useState(false);
   const [coords, setCoords]   = useState(null);
+  const [isOfflineSuccess, setIsOfflineSuccess] = useState(false);
 
   const handle = e => setForm(f => ({ ...f, [e.target.name]: e.target.value }));
 
@@ -57,21 +59,37 @@ export default function VictimSubmitRequest() {
 
   const submit = async e => {
     e.preventDefault(); setError(''); setSaving(true);
+    const requestData = {
+      needType:     form.needType,
+      description:  form.description,
+      urgency:      form.urgency,
+      peopleCount:  Number(form.peopleCount),
+      location: {
+        address:  form['location.address'],
+        area:     form['location.area'],
+        district: form['location.district'],
+        state:    form['location.state'],
+        landmark: form['location.landmark'],
+        coordinates: coords || undefined,
+      },
+    };
+
+    if (!navigator.onLine) {
+      try {
+        saveOfflineRequest(requestData);
+        setIsOfflineSuccess(true);
+        setSuccess(true);
+        setTimeout(() => navigate('/victim/requests'), 2500);
+      } catch (err) {
+        setError('Failed to save offline request');
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
+
     try {
-      await victimAPI.submitRequest({
-        needType:     form.needType,
-        description:  form.description,
-        urgency:      form.urgency,
-        peopleCount:  Number(form.peopleCount),
-        location: {
-          address:  form['location.address'],
-          area:     form['location.area'],
-          district: form['location.district'],
-          state:    form['location.state'],
-          landmark: form['location.landmark'],
-          coordinates: coords || undefined,
-        },
-      });
+      await victimAPI.submitRequest(requestData);
       setSuccess(true);
       setTimeout(() => navigate('/victim/requests'), 2000);
     } catch (err) {
@@ -81,13 +99,23 @@ export default function VictimSubmitRequest() {
 
   if (success) return (
     <>
-      <div className="topbar"><div className="topbar-left"><h1>SOS Submitted</h1></div></div>
+      <div className="topbar">
+        <div className="topbar-left">
+          <h1>{isOfflineSuccess ? 'SOS Saved Offline' : 'SOS Submitted'}</h1>
+        </div>
+      </div>
       <div className="page-body page-enter">
         <div className="card" style={{ maxWidth: 480, margin: '0 auto', textAlign: 'center', padding: '40px' }}>
-          <div className="material-symbols-outlined" style={{ fontSize: '48px', color: 'var(--success)', marginBottom: '16px' }}>check_circle</div>
-          <h2 style={{ fontSize: '18px', fontWeight: 700, color: 'var(--t1)', marginBottom: '8px' }}>Request Submitted Successfully</h2>
+          <div className="material-symbols-outlined" style={{ fontSize: '48px', color: isOfflineSuccess ? 'var(--warning)' : 'var(--success)', marginBottom: '16px' }}>
+            {isOfflineSuccess ? 'cloud_off' : 'check_circle'}
+          </div>
+          <h2 style={{ fontSize: '18px', fontWeight: 700, color: 'var(--t1)', marginBottom: '8px' }}>
+            {isOfflineSuccess ? 'Saved Offline (Pending Sync)' : 'Request Submitted Successfully'}
+          </h2>
           <p style={{ color: 'var(--t3)', fontSize: '14px', marginBottom: '20px', lineHeight: 1.5 }}>
-            Your SOS request has been received. Our team will review it and assign help shortly.
+            {isOfflineSuccess
+              ? 'You are currently offline. Your SOS request has been saved locally and will submit automatically once internet is restored.'
+              : 'Your SOS request has been received. Our team will review it and assign help shortly.'}
           </p>
           <div style={{ fontSize: '12px', color: 'var(--t4)' }}>Redirecting to your requests…</div>
         </div>

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { victimAPI } from '../../api';
 import { useAuth } from '../../context/AuthContext';
 import Loader from '../../components/common/Loader';
+import { getOfflineRequests } from '../../utils/offlineQueue';
 
 export default function VictimDashboard() {
   const { user } = useAuth();
@@ -10,8 +11,15 @@ export default function VictimDashboard() {
   const [loading, setLoading]   = useState(true);
 
   useEffect(() => {
+    const offlineReqs = getOfflineRequests();
     victimAPI.getMyRequests()
-      .then(({ data }) => setRequests(data.data.docs))
+      .then(({ data }) => {
+        setRequests([...offlineReqs, ...data.data.docs]);
+      })
+      .catch((err) => {
+        console.error('Failed to load online requests:', err);
+        setRequests(offlineReqs);
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -75,7 +83,7 @@ export default function VictimDashboard() {
             <div className="card">
               <div className="card-header">
                 <div className="card-title">Latest Request Status</div>
-                <Link to="/app/victim-requests" className="btn-ghost" style={{ padding: '4px 10px', fontSize: '12px' }}>View all</Link>
+                <Link to="/victim/requests" className="btn-ghost" style={{ padding: '4px 10px', fontSize: '12px' }}>View all</Link>
               </div>
               <div className="card-body">
                 {loading ? <div style={{ padding: '40px 0' }}><Loader /></div> : !latest ? (
@@ -87,11 +95,14 @@ export default function VictimDashboard() {
                 ) : (
                   <div>
                     <div style={{ marginBottom: '24px' }}>
-                      <div style={{ fontSize: '15px', fontWeight: 600, color: 'var(--t1)', textTransform: 'capitalize', marginBottom: '4px' }}>
-                        {latest.requestType || 'Help Request'}
+                      <div style={{ fontSize: '15px', fontWeight: 600, color: 'var(--t1)', textTransform: 'capitalize', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        {latest.requestType || latest.needType} Request
+                        {latest.status === 'offline_pending' && (
+                          <span style={{ fontSize: '11px', background: 'var(--warning-bg)', color: 'var(--warning)', border: '1px solid var(--warning-br)', padding: '2px 6px', borderRadius: '4px', fontWeight: 600 }}>📶 Offline Queue</span>
+                        )}
                       </div>
                       <div style={{ fontSize: '13px', color: 'var(--t3)', marginBottom: '8px' }}>
-                        {latest.title || latest.description?.slice(0, 80) + '...'}
+                        {latest.title || latest.description?.slice(0, 80) + (latest.description?.length > 80 ? '...' : '')}
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--t4)' }}>
                         <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>pin_drop</span>
@@ -99,27 +110,36 @@ export default function VictimDashboard() {
                       </div>
                     </div>
 
-                    {/* Progress Stepper */}
-                    <div className="tracker-stepper">
-                      <div className="tracker-line" />
-                      <div className="tracker-line tracker-line-fill" style={{ width: `${(Math.max(actualIndex, 0) / (steps.length - 1)) * 100}%` }} />
-                      
-                      {steps.map((step, i) => {
-                        const isDone = i < actualIndex;
-                        const isCurrent = i === actualIndex || (actualIndex === -1 && i === 0);
+                    {latest.status === 'offline_pending' ? (
+                      <div style={{ background: 'var(--warning-bg)', border: '1px solid var(--warning-br)', borderRadius: 'var(--r-md)', padding: '12px 16px', marginBottom: '24px', fontSize: '13px', color: 'var(--warning)' }}>
+                        <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                          <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>cloud_off</span> Pending Internet Connection
+                        </div>
+                        This request is saved locally. It will be sent to our teams automatically once your connection is restored.
+                      </div>
+                    ) : (
+                      /* Progress Stepper */
+                      <div className="tracker-stepper">
+                        <div className="tracker-line" />
+                        <div className="tracker-line tracker-line-fill" style={{ width: `${(Math.max(actualIndex, 0) / (steps.length - 1)) * 100}%` }} />
                         
-                        return (
-                          <div key={step.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', position: 'relative' }}>
-                            <div className={`tracker-node ${isDone ? 'done' : isCurrent ? 'current' : 'future'}`}>
-                              {isDone ? <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>check</span> : (i + 1)}
+                        {steps.map((step, i) => {
+                          const isDone = i < actualIndex;
+                          const isCurrent = i === actualIndex || (actualIndex === -1 && i === 0);
+                          
+                          return (
+                            <div key={step.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', position: 'relative' }}>
+                              <div className={`tracker-node ${isDone ? 'done' : isCurrent ? 'current' : 'future'}`}>
+                                {isDone ? <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>check</span> : (i + 1)}
+                              </div>
+                              <div className={`tracker-label ${isCurrent ? 'active' : ''}`}>
+                                {step.label}
+                              </div>
                             </div>
-                            <div className={`tracker-label ${isCurrent ? 'active' : ''}`}>
-                              {step.label}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
+                          );
+                        })}
+                      </div>
+                    )}
 
                     {latest.responseNote && (
                       <div style={{ background: 'var(--info-bg)', border: '1px solid var(--info-br)', borderRadius: 'var(--r-md)', padding: '10px 14px', marginTop: '40px', fontSize: '12px', color: 'var(--t2)', fontStyle: 'italic' }}>

@@ -2,6 +2,7 @@ import { Routes, Route, Navigate, useLocation, Link } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import AppLayout from './components/layout/AppLayout';
 import { useEffect, useState } from 'react';
+import { syncOfflineRequests } from './utils/offlineQueue';
 
 import HomePage     from './pages/home/HomePage';
 import LoginPage    from './pages/auth/LoginPage';
@@ -124,6 +125,29 @@ function AppRoutes() {
 /* ── App ───────────────────────────────────────────── */
 export default function App() {
   const location = useLocation();
+
+  useEffect(() => {
+    const handleOnline = () => {
+      const token = localStorage.getItem('cc_token');
+      if (token) {
+        syncOfflineRequests((count) => {
+          alert(`📶 Internet connection restored! Syncing ${count} offline SOS request(s) to the dispatch team...`);
+          window.location.reload();
+        });
+      }
+    };
+
+    window.addEventListener('online', handleOnline);
+
+    // Run auto-sync check on mount if currently online
+    if (navigator.onLine) {
+      handleOnline();
+    }
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+    };
+  }, []);
 
   return (
     <AuthProvider>

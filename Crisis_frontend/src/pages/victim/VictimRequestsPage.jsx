@@ -4,9 +4,10 @@ import { victimAPI } from '../../api';
 import PageHeader from '../../components/layout/PageHeader';
 import Badge from '../../components/common/Badge';
 import Loader from '../../components/common/Loader';
+import { getOfflineRequests } from '../../utils/offlineQueue';
 
 const STATUS_ICON = {
-  submitted: '⏳', reviewing: '🔍', linked: '👤', resolved: '✅', closed: '🔒'
+  offline_pending: '📶', submitted: '⏳', reviewing: '🔍', linked: '👤', resolved: '✅', closed: '🔒'
 };
 
 export default function VictimRequestsPage() {
@@ -16,8 +17,13 @@ export default function VictimRequestsPage() {
 
   const load = () => {
     setLoading(true);
+    const offlineReqs = getOfflineRequests();
     victimAPI.getMyRequests()
-      .then(({ data }) => setRequests(data.data.docs))
+      .then(({ data }) => setRequests([...offlineReqs, ...data.data.docs]))
+      .catch((err) => {
+        console.error('Failed to load requests:', err);
+        setRequests(offlineReqs);
+      })
       .finally(() => setLoading(false));
   };
 
@@ -60,12 +66,16 @@ export default function VictimRequestsPage() {
                 <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
                   <div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                      <span style={{ fontSize: '1.1rem' }}>{STATUS_ICON[r.status]}</span>
+                      <span style={{ fontSize: '1.1rem' }}>{STATUS_ICON[r.status] || '⏳'}</span>
                       <span style={{ fontWeight: 700, fontSize: '.95rem', textTransform: 'capitalize' }}>
                         {r.needType} Request
                       </span>
                       <Badge value={r.urgency} type={r.urgency} />
-                      <Badge value={r.status} />
+                      {r.status === 'offline_pending' ? (
+                        <Badge value="Offline Queue" type="warning" />
+                      ) : (
+                        <Badge value={r.status} />
+                      )}
                     </div>
                     <p style={{ fontSize: '.85rem', color: 'var(--text2)', lineHeight: 1.6 }}>
                       {r.description?.slice(0, 120)}{r.description?.length > 120 ? '…' : ''}
@@ -75,7 +85,7 @@ export default function VictimRequestsPage() {
 
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, fontSize: '.78rem', color: 'var(--text3)', marginBottom: 12 }}>
                   <span>📍 {r.location?.address}{r.location?.area ? `, ${r.location.area}` : ''}</span>
-                  <span>👥 {r.peopleCount} {r.peopleCount === 1 ? 'person' : 'people'}</span>
+                  <span>👥 {r.peopleCount || 1} {r.peopleCount === 1 ? 'person' : 'people'}</span>
                   <span style={{ fontFamily: 'var(--font-mono)' }}>
                     {new Date(r.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
                   </span>
@@ -87,7 +97,7 @@ export default function VictimRequestsPage() {
                     {['submitted','reviewing','linked','resolved'].map((s, i) => {
                       const steps = ['submitted','reviewing','linked','resolved'];
                       const current = steps.indexOf(r.status);
-                      const filled = i <= current && r.status !== 'closed';
+                      const filled = i <= current && r.status !== 'closed' && r.status !== 'offline_pending';
                       return (
                         <div key={s} style={{
                           flex: 1, marginRight: i < 3 ? 2 : 0,
@@ -99,7 +109,9 @@ export default function VictimRequestsPage() {
                     })}
                   </div>
                   <div style={{ fontSize: '.68rem', color: 'var(--text3)', marginTop: 4, fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '.06em' }}>
-                    {r.status === 'closed' ? 'Closed' : `Step ${Math.min(['submitted','reviewing','linked','resolved'].indexOf(r.status) + 1, 4)} of 4`}
+                    {r.status === 'offline_pending' 
+                      ? '📶 PENDING INTERNET CONNECTION' 
+                      : r.status === 'closed' ? 'Closed' : `Step ${Math.min(['submitted','reviewing','linked','resolved'].indexOf(r.status) + 1, 4)} of 4`}
                   </div>
                 </div>
 

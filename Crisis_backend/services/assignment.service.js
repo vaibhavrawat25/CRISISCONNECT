@@ -3,82 +3,85 @@ const HelpRequest = require('../models/HelpRequest');
 const User = require('../models/User');
 const paginate = require('../utils/pagination');
 const { sendCriticalAssignmentEmail } = require('./email.service');
+const { runInTransaction } = require('../utils/transaction');
 
 /**
  * Assign a volunteer to a help request.
  */
 const createAssignment = async ({ requestId, volunteerId, assignedById, skipSkillCheck }) => {
-  const [helpRequest, volunteer] = await Promise.all([
-    HelpRequest.findById(requestId),
-    User.findOne({ _id: volunteerId, role: 'volunteer', isActive: true, isAvailable: true }),
-  ]);
+  return await runInTransaction(async (session) => {
+    const [helpRequest, volunteer] = await Promise.all([
+      HelpRequest.findById(requestId).session(session),
+      User.findOne({ _id: volunteerId, role: 'volunteer', isActive: true, isAvailable: true }).session(session),
+    ]);
 
-  if (!helpRequest) {
-    const err = new Error('Help request not found');
-    err.statusCode = 404;
-    throw err;
-  }
-  if (!volunteer) {
-    const err = new Error('Volunteer not found or inactive');
-    err.statusCode = 404;
-    throw err;
-  }
-
-  if (['resolved', 'cancelled'].includes(helpRequest.status)) {
-    const err = new Error('Cannot assign to a resolved or cancelled request');
-    err.statusCode = 400;
-    throw err;
-  }
-
-  // Skill-gating soft block for critical/high priority tasks
-  if (!skipSkillCheck && ['critical', 'high'].includes(helpRequest.priority)) {
-    const requiredSkill = helpRequest.requestType;
-    const hasSkill = volunteer.skills && volunteer.skills.includes(requiredSkill);
-    if (!hasSkill) {
-      return {
-        warning: true,
-        message: `Volunteer "${volunteer.name}" does not have the "${requiredSkill}" skill required for this ${helpRequest.priority}-priority task. Their skills: ${volunteer.skills?.join(', ') || 'none'}. Proceed anyway?`,
-        requiresConfirmation: true,
-      };
+    if (!helpRequest) {
+      const err = new Error('Help request not found');
+      err.statusCode = 404;
+      throw err;
     }
-  }
+    if (!volunteer) {
+      const err = new Error('Volunteer not found or inactive');
+      err.statusCode = 404;
+      throw err;
+    }
 
-  // Check for existing active assignment
-  const existing = await Assignment.findOne({ request: requestId, volunteer: volunteerId });
-  if (existing) {
-    const err = new Error('Volunteer is already assigned to this request');
-    err.statusCode = 400;
-    throw err;
-  }
+    if (['resolved', 'cancelled'].includes(helpRequest.status)) {
+      const err = new Error('Cannot assign to a resolved or cancelled request');
+      err.statusCode = 400;
+      throw err;
+    }
 
-  const assignment = await Assignment.create({
-    request: requestId,
-    volunteer: volunteerId,
-    assignedBy: assignedById,
+    // Skill-gating soft block for critical/high priority tasks
+    if (!skipSkillCheck && ['critical', 'high'].includes(helpRequest.priority)) {
+      const requiredSkill = helpRequest.requestType;
+      const hasSkill = volunteer.skills && volunteer.skills.includes(requiredSkill);
+      if (!hasSkill) {
+        return {
+          warning: true,
+          message: `Volunteer "${volunteer.name}" does not have the "${requiredSkill}" skill required for this ${helpRequest.priority}-priority task. Their skills: ${volunteer.skills?.join(', ') || 'none'}. Proceed anyway?`,
+          requiresConfirmation: true,
+        };
+      }
+    }
+
+    // Check for existing active assignment
+    const existing = await Assignment.findOne({ request: requestId, volunteer: volunteerId }).session(session);
+    if (existing) {
+      const err = new Error('Volunteer is already assigned to this request');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const [assignment] = await Assignment.create([{
+      request: requestId,
+      volunteer: volunteerId,
+      assignedBy: assignedById,
+    }], { session });
+
+    // Update the help request
+    helpRequest.assignedTo = volunteerId;
+    helpRequest.status = 'assigned';
+    helpRequest.reviewedBy = assignedById;
+    await helpRequest.save({ session });
+
+    // Mark volunteer as unavailable
+    volunteer.isAvailable = false;
+    await volunteer.save({ session });
+
+    await assignment.populate([
+      { path: 'request', select: 'title status priority' },
+      { path: 'volunteer', select: 'name email phone' },
+      { path: 'assignedBy', select: 'name role' },
+    ]);
+
+    // Send email if priority is critical
+    if (helpRequest.priority === 'critical') {
+      sendCriticalAssignmentEmail(volunteer, helpRequest).catch(() => {});
+    }
+
+    return assignment;
   });
-
-  // Update the help request
-  helpRequest.assignedTo = volunteerId;
-  helpRequest.status = 'assigned';
-  helpRequest.reviewedBy = assignedById;
-  await helpRequest.save();
-
-  // Mark volunteer as unavailable
-  volunteer.isAvailable = false;
-  await volunteer.save();
-
-  await assignment.populate([
-    { path: 'request', select: 'title status priority' },
-    { path: 'volunteer', select: 'name email phone' },
-    { path: 'assignedBy', select: 'name role' },
-  ]);
-
-  // Send email if priority is critical
-  if (helpRequest.priority === 'critical') {
-    sendCriticalAssignmentEmail(volunteer, helpRequest).catch(() => {});
-  }
-
-  return assignment;
 };
 
 /**
@@ -115,59 +118,61 @@ const getMyAssignments = async (volunteerId, queryParams = {}) => {
  * Also syncs the HelpRequest status and volunteer availability.
  */
 const updateAssignmentStatus = async (assignmentId, requestingUser, { status, remarks }) => {
-  const assignment = await Assignment.findById(assignmentId);
-  if (!assignment) {
-    const err = new Error('Assignment not found');
-    err.statusCode = 404;
-    throw err;
-  }
-
-  const isSelf = assignment.volunteer.toString() === requestingUser._id.toString();
-  const isAdmin = requestingUser.role === 'admin';
-  const isCoordinator = requestingUser.role === 'coordinator';
-
-  if (!isSelf && !isAdmin && !isCoordinator) {
-    const err = new Error('Not authorised to update this assignment');
-    err.statusCode = 403;
-    throw err;
-  }
-
-  const validTransitions = {
-    assigned: ['accepted', 'rejected'],
-    accepted: ['in_progress'],
-    in_progress: ['completed'],
-  };
-
-  if (!validTransitions[assignment.status]?.includes(status)) {
-    const err = new Error(`Cannot transition from '${assignment.status}' to '${status}'`);
-    err.statusCode = 400;
-    throw err;
-  }
-
-  assignment.status = status;
-  if (remarks) assignment.remarks = remarks;
-  if (status === 'accepted') assignment.acceptedAt = new Date();
-  if (status === 'completed') assignment.completedAt = new Date();
-  await assignment.save();
-
-  // Sync HelpRequest status
-  const helpRequest = await HelpRequest.findById(assignment.request);
-  if (helpRequest) {
-    if (status === 'in_progress') helpRequest.status = 'in_progress';
-    if (status === 'completed') helpRequest.status = 'resolved';
-    if (status === 'rejected') {
-      helpRequest.status = 'pending';
-      helpRequest.assignedTo = null;
+  return await runInTransaction(async (session) => {
+    const assignment = await Assignment.findById(assignmentId).session(session);
+    if (!assignment) {
+      const err = new Error('Assignment not found');
+      err.statusCode = 404;
+      throw err;
     }
-    await helpRequest.save();
-  }
 
-  // Free up volunteer if rejected or completed
-  if (['rejected', 'completed'].includes(status)) {
-    await User.findByIdAndUpdate(assignment.volunteer, { isAvailable: true });
-  }
+    const isSelf = assignment.volunteer.toString() === requestingUser._id.toString();
+    const isAdmin = requestingUser.role === 'admin';
+    const isCoordinator = requestingUser.role === 'coordinator';
 
-  return assignment;
+    if (!isSelf && !isAdmin && !isCoordinator) {
+      const err = new Error('Not authorised to update this assignment');
+      err.statusCode = 403;
+      throw err;
+    }
+
+    const validTransitions = {
+      assigned: ['accepted', 'rejected'],
+      accepted: ['in_progress'],
+      in_progress: ['completed'],
+    };
+
+    if (!validTransitions[assignment.status]?.includes(status)) {
+      const err = new Error(`Cannot transition from '${assignment.status}' to '${status}'`);
+      err.statusCode = 400;
+      throw err;
+    }
+
+    assignment.status = status;
+    if (remarks) assignment.remarks = remarks;
+    if (status === 'accepted') assignment.acceptedAt = new Date();
+    if (status === 'completed') assignment.completedAt = new Date();
+    await assignment.save({ session });
+
+    // Sync HelpRequest status
+    const helpRequest = await HelpRequest.findById(assignment.request).session(session);
+    if (helpRequest) {
+      if (status === 'in_progress') helpRequest.status = 'in_progress';
+      if (status === 'completed') helpRequest.status = 'resolved';
+      if (status === 'rejected') {
+        helpRequest.status = 'pending';
+        helpRequest.assignedTo = null;
+      }
+      await helpRequest.save({ session });
+    }
+
+    // Free up volunteer if rejected or completed
+    if (['rejected', 'completed'].includes(status)) {
+      await User.findByIdAndUpdate(assignment.volunteer, { isAvailable: true }, { session });
+    }
+
+    return assignment;
+  });
 };
 
 /**
@@ -176,37 +181,39 @@ const updateAssignmentStatus = async (assignmentId, requestingUser, { status, re
  * Reverts the help request to pending and frees the volunteer.
  */
 const deleteAssignment = async (assignmentId, requestingUser) => {
-  const assignment = await Assignment.findById(assignmentId);
-  if (!assignment) {
-    const err = new Error('Assignment not found');
-    err.statusCode = 404;
-    throw err;
-  }
+  return await runInTransaction(async (session) => {
+    const assignment = await Assignment.findById(assignmentId).session(session);
+    if (!assignment) {
+      const err = new Error('Assignment not found');
+      err.statusCode = 404;
+      throw err;
+    }
 
-  // Coordinators can only cancel assignments they created
-  if (requestingUser.role === 'coordinator' &&
-      assignment.assignedBy.toString() !== requestingUser._id.toString()) {
-    const err = new Error('Coordinators can only cancel assignments they created');
-    err.statusCode = 403;
-    throw err;
-  }
+    // Coordinators can only cancel assignments they created
+    if (requestingUser.role === 'coordinator' &&
+        assignment.assignedBy.toString() !== requestingUser._id.toString()) {
+      const err = new Error('Coordinators can only cancel assignments they created');
+      err.statusCode = 403;
+      throw err;
+    }
 
-  if (['completed', 'rejected'].includes(assignment.status)) {
-    const err = new Error('Cannot delete a completed or rejected assignment');
-    err.statusCode = 400;
-    throw err;
-  }
+    if (['completed', 'rejected'].includes(assignment.status)) {
+      const err = new Error('Cannot delete a completed or rejected assignment');
+      err.statusCode = 400;
+      throw err;
+    }
 
-  await assignment.deleteOne();
+    await assignment.deleteOne({ session });
 
-  // Revert request to pending
-  await HelpRequest.findByIdAndUpdate(assignment.request, {
-    status: 'pending',
-    assignedTo: null,
+    // Revert request to pending
+    await HelpRequest.findByIdAndUpdate(assignment.request, {
+      status: 'pending',
+      assignedTo: null,
+    }, { session });
+
+    // Free volunteer
+    await User.findByIdAndUpdate(assignment.volunteer, { isAvailable: true }, { session });
   });
-
-  // Free volunteer
-  await User.findByIdAndUpdate(assignment.volunteer, { isAvailable: true });
 };
 
 /**

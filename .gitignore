@@ -1,6 +1,4 @@
+teammate_A_instructions.md
 node_modules/
 .env
-.env.*
-!.env.example
-Crisis_backend/uploads/
-teammate_A_instructions.md
+.DS_Store
